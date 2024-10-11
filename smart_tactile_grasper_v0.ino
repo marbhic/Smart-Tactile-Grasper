@@ -1,5 +1,5 @@
 #include <Servo.h>
-// testing
+
 Servo myservo;
 const byte strain_gauge_pin = A0; 
 
@@ -21,3 +21,4 @@ void loop() {
   Serial.println(sensorValue);
   delay(100);        // delay in between reads for stability
   }
+
