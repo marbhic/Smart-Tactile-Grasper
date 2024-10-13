@@ -1,8 +1,7 @@
 #include <Servo.h>
-//testing
-//test
-//onemoretest
-//secondnewtest
+
+//abunchoftesting
+
 Servo myservo;
 const byte strain_gauge_pin = A0; 
 
