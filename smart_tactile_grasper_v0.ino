@@ -13,27 +13,18 @@ float desiredJawAngle = 0.0;  // Desired jaw angle set by the user
 
 // Function to calculate the actuator displacement (y) from a given jaw angle (x)
 float calculateActuatorDisplacement(float jawAngle) {
-    if (jawAngle > maxJawAngle) {
-        jawAngle = maxJawAngle;  // Limit to max allowable angle
-    } else if (jawAngle < 0) {
-        jawAngle = 0;  // Ensure angle is not negative
-    }
-
     // Equation for displacement: y = 0.0367x - 0.0318
-    float displacement = 0.0367 * jawAngle - 0.0318;
-    return displacement;
+    return 0.0367 * jawAngle - 0.0318;
 }
 
 // Function to convert ADC bit value to force at the strain gauge (Fgauge)
 float calculateForceAtStrainGauge(int bitValue) {
-    float Fgauge = (forceConstant * bitValue) / adcResolution;
-    return Fgauge;
+    return (forceConstant * bitValue) / adcResolution;
 }
 
 // Function to calculate the force at the grasper jaws (Fjaws) from Fgauge
 float calculateForceAtJaws(float Fgauge) {
-    float Fjaws = Fgauge / mechanicalAdvantage;
-    return Fjaws;
+    return Fgauge / mechanicalAdvantage;
 }
 
 // Placeholder function to read the ADC bit value from the strain gauge
@@ -48,34 +39,16 @@ void determineMotionDirection(float currentAngle, float desiredAngle) {
         Serial.println("Grasper jaws are opening.");
         if (calculateForceAtJaws(calculateForceAtStrainGauge(readAdcBitValue())) > maxFjaws) {
             Serial.println("Warning: Force at grasper jaws exceeds 18 N. Adjusting and halting.");
-            float SafetyAngle = desiredAngle - angleAdjustment; // Calculate safety angle for closing
-            desiredAngle = SafetyAngle;  // Update desired angle to the safety angle
-            float actuatorDisplacement = calculateActuatorDisplacement(SafetyAngle);
-            
-            Serial.print("Adjusted actuator displacement for ");
-            Serial.print(SafetyAngle);
-            Serial.print(" degrees: ");
-            Serial.print(actuatorDisplacement);
-            Serial.println(" mm");
-            Serial.println("System halted. Awaiting further instructions.");
-            getUserInputForJawAngle();  // Prompt user to input a new desired jaw angle
+            desiredAngle -= angleAdjustment;  // Adjust angle for safety by closing
+            moveToDesiredAngle();  // Re-attempt move with adjusted angle
             return;
         }
     } else if (desiredAngle < currentAngle) {
         Serial.println("Grasper jaws are closing.");
         if (calculateForceAtJaws(calculateForceAtStrainGauge(readAdcBitValue())) > maxFjaws) {
             Serial.println("Warning: Force at grasper jaws exceeds 18 N. Adjusting and halting.");
-            float SafetyAngle = desiredAngle + angleAdjustment; // Calculate safety angle for opening
-            desiredAngle = SafetyAngle;  // Update desired angle to the safety angle
-            float actuatorDisplacement = calculateActuatorDisplacement(SafetyAngle);
-            
-            Serial.print("Adjusted actuator displacement for ");
-            Serial.print(SafetyAngle);
-            Serial.print(" degrees: ");
-            Serial.print(actuatorDisplacement);
-            Serial.println(" mm");
-            Serial.println("System halted. Awaiting further instructions.");
-            getUserInputForJawAngle();  // Prompt user to input a new desired jaw angle
+            desiredAngle += angleAdjustment;  // Adjust angle for safety by opening
+            moveToDesiredAngle();  // Re-attempt move with adjusted angle
             return;
         }
     } else {
@@ -104,37 +77,77 @@ void getUserInputForJawAngle() {
 
 // Main loop to demonstrate calculations and motion detection
 void loop() {
-    getUserInputForJawAngle();  // Prompt user for the desired jaw angle
+    getUserInputForJawAngle();  // Prompt user to enter the desired jaw angle
+    moveToDesiredAngle();       // Move and update current jaw angle incrementally
+    verifyJawAngle();           // Verify if current jaw angle matches the desired angle
+    delay(1000);                // Wait before the next iteration
+}
 
-    // Calculate the actuator displacement needed for the desired jaw angle
-    float actuatorDisplacement = calculateActuatorDisplacement(desiredJawAngle);
-    Serial.print("Calculated actuator displacement for ");
+// Function to simulate incremental movement to the desired angle with continuous force checking
+void moveToDesiredAngle() {
+    Serial.print("Moving towards desired jaw angle: ");
     Serial.print(desiredJawAngle);
-    Serial.print(" degrees: ");
-    Serial.print(actuatorDisplacement);
-    Serial.println(" mm");
+    Serial.println(" degrees.");
+    
+    // Define step size to simulate incremental movement
+    float stepSize = 1.0;  // Adjust the angle by 1 degree per step for smooth simulation
 
-    // Read ADC bit value from the strain gauge and calculate forces
-    int adcBitValue = readAdcBitValue();
-    float Fgauge = calculateForceAtStrainGauge(adcBitValue);
-    float Fjaws = calculateForceAtJaws(Fgauge);
+    // Move incrementally towards the desired angle
+    while (currentJawAngle != desiredJawAngle) {
+        // Increment or decrement the current angle towards the desired angle
+        if (currentJawAngle < desiredJawAngle) {
+            currentJawAngle += stepSize;
+            if (currentJawAngle > desiredJawAngle) currentJawAngle = desiredJawAngle;  // Avoid overshooting
+        } else if (currentJawAngle > desiredJawAngle) {
+            currentJawAngle -= stepSize;
+            if (currentJawAngle < desiredJawAngle) currentJawAngle = desiredJawAngle;  // Avoid overshooting
+        }
 
-    // Display force readings
-    Serial.print("ADC bit value: ");
-    Serial.print(adcBitValue);
-    Serial.print(" | Force at strain gauge: ");
-    Serial.print(Fgauge);
-    Serial.print(" N | Force at grasper jaws: ");
-    Serial.print(Fjaws);
-    Serial.println(" N");
+        // Check force at each step
+        float Fgauge = calculateForceAtStrainGauge(readAdcBitValue());
+        float Fjaws = calculateForceAtJaws(Fgauge);
+        if (Fjaws > maxFjaws) {
+            Serial.println("Warning: Force at grasper jaws exceeds 18 N. Adjusting and halting.");
+            
+            // Adjust angle based on the current motion direction
+            if (currentJawAngle < desiredJawAngle) {
+                currentJawAngle -= angleAdjustment;  // Close jaws by 5 degrees
+            } else {
+                currentJawAngle += angleAdjustment;  // Open jaws by 5 degrees
+            }
 
-    // Determine if the grasper jaws are opening or closing and check force limit
-    determineMotionDirection(currentJawAngle, desiredJawAngle);
+            Serial.print("Adjusted angle to relieve force: ");
+            Serial.print(currentJawAngle);
+            Serial.println(" degrees.");
+            Serial.println("System halted. Awaiting further instructions.");
+            return;  // Halt the system
+        }
 
-    // Update the current jaw angle to the desired angle after movement (simulated)
-    currentJawAngle = desiredJawAngle;
+        // Print the current position for debugging
+        Serial.print("Current jaw angle: ");
+        Serial.print(currentJawAngle);
+        Serial.println(" degrees.");
 
-    delay(1000);  // Wait before the next reading
+        delay(100);  // Small delay for smooth operation
+    }
+
+    Serial.println("Reached desired angle.");
+}
+
+// Function to verify if the current jaw angle matches the desired jaw angle
+void verifyJawAngle() {
+    if (currentJawAngle == desiredJawAngle) {  
+        Serial.println("Verification successful: Current jaw angle matches the desired angle.");
+    } else {
+        Serial.println("Verification failed: Current jaw angle does not match the desired angle.");
+        Serial.print("Current jaw angle: ");
+        Serial.print(currentJawAngle);
+        Serial.print(" degrees, Desired jaw angle: ");
+        Serial.print(desiredJawAngle);
+        Serial.println(" degrees.");
+        Serial.println("Re-initiating process to reach the desired angle.");
+        moveToDesiredAngle();  // Re-attempt movement
+    }
 }
 
 // Setup function to initialize the system
