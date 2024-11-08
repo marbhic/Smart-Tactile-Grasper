@@ -27,7 +27,7 @@ void setup()
 }
 
 void loop() {
-  // ask user for desired jaw angle
+  // ask user for desired jaw angle, code will wait if jaws have reached desired position
   if (i == 0){
     getUserInputForJawAngle();
     }
@@ -36,10 +36,10 @@ void loop() {
     }
     
   // determine whether to close or open jaws or do nothing
-  if (desiredJawAngle < currentJawAngle){
+  if (desiredJawAngle > currentJawAngle){
     currentActuatorPos = opening();
     }
-  else if (desiredJawAngle > currentJawAngle){
+  else if (desiredJawAngle < currentJawAngle){
     currentActuatorPos = closing();
     }
   else if (desiredJawAngle == currentJawAngle){
@@ -75,7 +75,7 @@ void getUserInputForJawAngle() {
 void checkUserInputForJawAngle() {
     float newJawAngle = 0;
     if(Serial.available() > 0) {
-        // Wait for user input
+      
     }
     newJawAngle = Serial.parseFloat();  // Read user input
 
@@ -91,8 +91,11 @@ void checkUserInputForJawAngle() {
 
 //function to relate pusher rod force to jaw force
 int get_force(){
-  int strainGaugeForce = analogRead(strainGaugePin);
+  int strainGaugeVal = analogRead(strainGaugePin);
 
+  // convert bit to voltage value 5V/1024 (10-bit ADC) is 4.883 mV
+  float strainGaugeForce = 0.004883 * strainGaugeVal; 
+  
   // insert transfer function
   int jaw_force = 0;
   Serial.print("Current jaw force: ");
@@ -102,9 +105,10 @@ int get_force(){
   } 
   
 int getJawAngle(){
-  // insert transfer function
-  int jawCalculation = 0;
-  //jaw_position = x + y
+  // transfer function y = 0.0367x - 0.0138, where y is actuator displacement in mm and x is jaw angle in degrees
+  // 0.014 is the amount moved in mm per step (1 ms)
+  int jawCalculation = ((currentActuatorPos*0.014) + 0.0318)/0.0367;  // Equation for displacement in mm;
+  
   Serial.print("Current jaw angle: ");
   Serial.print(jawCalculation);
   return jawCalculation; 
