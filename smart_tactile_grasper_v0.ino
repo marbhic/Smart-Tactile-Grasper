@@ -11,15 +11,17 @@ void setup()
 
   // linear actuator is connected to pin 9
   myservo.attach(9);
+
+  Serial.println("Input 1 for opening and 0 for closing: ");
   
   // set servo to mid-point
 //  myservo.writeMicroseconds(1000);  
 }
 
 void loop() {
-  int sensorValue = analogRead(strain_gauge_pin);
+  // int sensorValue = analogRead(strain_gauge_pin);
   // print out the value you read:
-  Serial.println(sensorValue);
-  delay(100);        // delay in between reads for stability
+  // Serial.println(sensorValue);
+  // delay(100);        // delay in between reads for stability
   }
 
