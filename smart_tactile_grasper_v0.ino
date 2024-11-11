@@ -7,32 +7,34 @@ const float forceConstant = 488.76;  // Constant for converting bit value to for
 const float adcResolution = 1023.0;  // ADC resolution for bit value
 const float mechanicalAdvantage = 363.74 / 22.83;  // Ratio for converting Fgauge to Fjaws
 const float maxFjaws = 18.0;  // Maximum allowable force at the grasper jaws in N
-const float angleAdjustment = 5.0;  // Angle adjustment when exceeding max force (in degrees)
+const float stepSize = 1.0;  // Angle increment for smooth movement
 
 // Variables to store the current and desired jaw angles
 float currentJawAngle = 0.0;  // Initial current jaw angle (assumed or measured)
+float previousJawAngle = 0.0; // Stores the last valid jaw angle before each step
 float desiredJawAngle = 0.0;  // Desired jaw angle set by the user
+bool systemHalted = false;    // System halt flag
 
 // Servo and strain gauge setup
 Servo myservo;
 const byte strain_gauge_pin = A0;  // Strain gauge connected to analog pin A0
 
+// Timing variables for non-blocking delays
+unsigned long lastInputTime = 0;
+unsigned long lastMoveTime = 0;
+const unsigned long inputInterval = 1000;
+const unsigned long moveInterval = 100;
+
 // Function to calculate the actuator displacement (y) from a given jaw angle (x)
 float calculateActuatorDisplacement(float jawAngle) {
-    return 0.0367 * jawAngle - 0.0318;  // Equation for displacement in mm
+    return 0.0367 * jawAngle - 0.0318;
 }
 
-// Function to convert displacement to precise pulse width for actuator control (0 to 2000 us)
+// Function to convert displacement to pulse width for actuator control (0 to 2000 us)
 int calculateActuatorPulseWidth(float jawAngle) {
     float displacement = calculateActuatorDisplacement(jawAngle);
-
-    // Scale displacement linearly to pulse width in microseconds
     float pulseWidth = (displacement / maxActuatorMovement) * 2000.0;
-
-    // Constrain pulse width to ensure it stays within the valid range of 0–2000 us
-    pulseWidth = constrain(pulseWidth, 0, 2000);
-
-    return static_cast<int>(pulseWidth);  // Casting to integer for Servo control
+    return static_cast<int>(constrain(pulseWidth, 0, 2000));
 }
 
 // Function to convert ADC bit value to force at the strain gauge (Fgauge)
@@ -47,36 +49,49 @@ float calculateForceAtJaws(float Fgauge) {
 
 // Function to read the strain gauge value and convert it to force
 float readForceAtJaws() {
-    int sensorValue = analogRead(strain_gauge_pin);  // Read ADC value from strain gauge
-    float Fgauge = calculateForceAtStrainGauge(sensorValue);  // Calculate force from strain gauge reading
-    return calculateForceAtJaws(Fgauge);  // Calculate force at jaws
+    int sensorValue = analogRead(strain_gauge_pin);
+    float Fgauge = calculateForceAtStrainGauge(sensorValue);
+    return calculateForceAtJaws(Fgauge);
 }
 
-// Function to get user input for the desired jaw angle
+// Function to get user input for the desired jaw angle and handle system halt reset
 void getUserInputForJawAngle() {
     bool validInput = false;
     while (!validInput) {
         Serial.println("Enter desired jaw angle (0 to 80 degrees):");
         while (Serial.available() == 0) {
-            // Wait for user input
+            // Allow other tasks to proceed if needed
         }
-        desiredJawAngle = Serial.parseFloat();  // Read user input
+        desiredJawAngle = Serial.parseFloat();
 
-        // Validate the input
         if (desiredJawAngle >= 0 && desiredJawAngle <= maxJawAngle) {
-            validInput = true;  // Input is valid
+            validInput = true;
+            if (systemHalted) {
+                Serial.println("System was halted due to excessive force. Type 'resume' to continue.");
+                while (Serial.readString() != "resume") {
+                    Serial.println("Awaiting 'resume' command to continue.");
+                }
+                systemHalted = false;  // Reset halt flag after user confirmation
+                Serial.println("System resumed from halt.");
+            }
         } else {
             Serial.println("Error: Desired jaw angle exceeds maximum allowed (80 degrees). Please re-enter.");
         }
     }
 }
 
-// Main loop to demonstrate calculations and motion detection
+// Main loop to handle periodic tasks without blocking
 void loop() {
-    getUserInputForJawAngle();  // Prompt user to enter the desired jaw angle
-    moveToDesiredAngle();       // Move and update current jaw angle incrementally
-    verifyJawAngle();           // Verify if current jaw angle matches the desired angle
-    delay(1000);                // Wait before the next iteration
+    if (millis() - lastInputTime >= inputInterval) {
+        lastInputTime = millis();
+        if (!systemHalted) {
+            getUserInputForJawAngle();  // Prompt user to enter the desired jaw angle
+            moveToDesiredAngle();       // Move and update current jaw angle incrementally
+            verifyJawAngle();           // Verify if current jaw angle matches the desired angle
+        } else {
+            Serial.println("System is halted. Awaiting user input to resume.");
+        }
+    }
 }
 
 // Function to simulate incremental movement to the desired angle with continuous force checking
@@ -84,64 +99,51 @@ void moveToDesiredAngle() {
     Serial.print("Moving towards desired jaw angle: ");
     Serial.print(desiredJawAngle);
     Serial.println(" degrees.");
-    
-    // Define step size to simulate incremental movement
-    const float stepSize = 1.0;  // Adjust the angle by 1 degree per step for smooth simulation
 
-    // Move incrementally towards the desired angle
-    while (currentJawAngle != desiredJawAngle) {
-        // Increment or decrement the current angle towards the desired angle
+    if (currentJawAngle != desiredJawAngle && millis() - lastMoveTime >= moveInterval) {
+        lastMoveTime = millis();
+        previousJawAngle = currentJawAngle;  // Save the previous angle before each step
+
+        // Adjust current jaw angle towards desired angle
         if (currentJawAngle < desiredJawAngle) {
             currentJawAngle += stepSize;
-            if (currentJawAngle > desiredJawAngle) currentJawAngle = desiredJawAngle;  // Avoid overshooting
+            if (currentJawAngle > desiredJawAngle) currentJawAngle = desiredJawAngle;
         } else if (currentJawAngle > desiredJawAngle) {
             currentJawAngle -= stepSize;
-            if (currentJawAngle < desiredJawAngle) currentJawAngle = desiredJawAngle;  // Avoid overshooting
+            if (currentJawAngle < desiredJawAngle) currentJawAngle = desiredJawAngle;
         }
 
-        // Check force at each step and display it on the serial monitor
+        // Read force and handle over-limit case
         float Fjaws = readForceAtJaws();
         Serial.print("Force at grasper jaws: ");
         Serial.print(Fjaws);
         Serial.println(" N");
 
         if (Fjaws > maxFjaws) {
-            Serial.println("Warning: Force at grasper jaws exceeds 18 N. Adjusting and halting.");
-            
-            // Adjust angle based on the current motion direction
-            if (currentJawAngle < desiredJawAngle) {
-                currentJawAngle -= angleAdjustment;  // Close jaws by 5 degrees
-            } else {
-                currentJawAngle += angleAdjustment;  // Open jaws by 5 degrees
-            }
-
-            Serial.print("Adjusted angle to relieve force: ");
+            Serial.println("Warning: Force at grasper jaws exceeds 18 N. Reverting to previous angle.");
+            currentJawAngle = previousJawAngle;  // Revert to last safe position
+            int pulseWidth = calculateActuatorPulseWidth(currentJawAngle);
+            myservo.writeMicroseconds(pulseWidth);
+            Serial.print("Reverted to previous angle: ");
             Serial.print(currentJawAngle);
             Serial.println(" degrees.");
             Serial.println("System halted. Awaiting further instructions.");
-            return;  // Halt the system
+            systemHalted = true;  // Set system to halt
+            return;
         }
 
-        // Print the current position for debugging
+        // Update servo position
+        int pulseWidth = calculateActuatorPulseWidth(currentJawAngle);
+        myservo.writeMicroseconds(pulseWidth);
         Serial.print("Current jaw angle: ");
         Serial.print(currentJawAngle);
         Serial.println(" degrees.");
-
-        // Calculate pulse width for the actuator based on currentJawAngle
-        int pulseWidth = calculateActuatorPulseWidth(currentJawAngle);
-        
-        // Set the actuator position using the calculated pulse width
-        myservo.writeMicroseconds(pulseWidth);
-
-        delay(100);  // Small delay for smooth operation
     }
-
-    Serial.println("Reached desired angle.");
 }
 
 // Function to verify if the current jaw angle matches the desired jaw angle
 void verifyJawAngle() {
-    if (currentJawAngle == desiredJawAngle) {  
+    if (currentJawAngle == desiredJawAngle) {
         Serial.println("Verification successful: Current jaw angle matches the desired angle.");
     } else {
         Serial.println("Verification failed: Current jaw angle does not match the desired angle.");
@@ -157,7 +159,6 @@ void verifyJawAngle() {
 
 // Setup function to initialize the system
 void setup() {
-    Serial.begin(9600);  // Start serial communication for debugging
-    myservo.attach(9);   // Attach the linear actuator servo to pin 9
-    Serial.println("System initialized. Starting at jaw angle 0 degrees.");
+    Serial.begin(9600);
+    myservo.attach(9);
 }
